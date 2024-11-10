@@ -2,12 +2,11 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 require('dotenv').config();
 const path = require('path');
 const { createClient } = require("@deepgram/sdk");
-const { record } = require('node-record-lpcm16');
+const audioCapture = require('./native/build/Release/audioCapture.node');
 
 const deepgram = createClient(process.env.DEEPGRAM_API); // Replace with your API key
 let mainWindow;
 
-console.log(process.env, "9")
 function createWindow() {
     mainWindow = new BrowserWindow({
         width: 800,
@@ -24,52 +23,49 @@ function createWindow() {
 
 app.whenReady().then(createWindow);
 
-// Capture audio and start transcription based on selected device
-ipcMain.on('start-transcription', (event, selectedDeviceId) => {
-    const dgConnection = deepgram.listen.live({
-        model: 'nova',
+// Capture audio and start transcription
+ipcMain.on('start-transcription', async (event, device) => {
+    console.log("Starting audio capture for transcription...");
+    
+    // Start audio capture
+    const audioStream = audioCapture.startCapture(device);
+
+    // Check if capture started successfully
+    if (!audioStream) {
+        console.error("Failed to start audio capture.");
+        return;
+    }
+
+    // Open a live transcription stream to Deepgram
+    const transcriptionStream = deepgram.transcription.live({
         punctuate: true,
         interim_results: false,
+        language: 'en-US',
     });
 
-    // Start recording audio
-    const recordingStream = record({
-        sampleRate: 16000,
-        channels: 1, // Mono
-        threshold: 0,
-        device: selectedDeviceId, // Use the selected audio device
-        parse: false // We'll send raw audio data directly
-    });
-
-    // Pipe the audio stream directly to Deepgram's connection
-    recordingStream.stream().pipe(dgConnection);
-
-    // recordingStream.on('error', (err) => {
-    //     console.error('Recording error:', err);
-    // });
-
-    // Handle Deepgram transcriptions
-    dgConnection.on('transcript', (data) => {
-
-        console.log("Deepgram WebSocket opened")
-        const transcription = data.channel.alternatives[0].transcript;
-        if (transcription) {
-            mainWindow.webContents.send('transcription-result', transcription);
+    // Log each transcription update received from Deepgram
+    transcriptionStream.on('transcriptReceived', (transcription) => {
+        const transcriptText = transcription.channel.alternatives[0].transcript;
+        if (transcriptText) {
+            console.log("Transcript:", transcriptText);
+            event.reply('transcription', transcriptText);  // Send back to the renderer
         }
     });
 
-    dgConnection.on('close', () => {
-        console.log('Deepgram WebSocket closed.');
-        recordingStream.stop(); // Ensure we stop the recording
+    // Handle audio data streaming to Deepgram
+    audioStream.on('data', (chunk) => {
+        transcriptionStream.write(chunk);
     });
 
-    dgConnection.on('error', (error) => {
-        console.error('Error with Deepgram WebSocket:', error);
-        mainWindow.webContents.send('transcription-error', 'Error with transcription API');
+    // Close transcription stream when audio capture stops
+    audioStream.on('end', () => {
+        console.log("Audio capture ended.");
+        transcriptionStream.finish();
     });
-});
 
-// Listen for the 'stop-transcription' event and stop the recording
-ipcMain.on('stop-transcription', () => {
-    record.stop(); // Stop any ongoing recording
+    // Handle any errors
+    audioStream.on('error', (err) => {
+        console.error("Audio capture error:", err);
+        transcriptionStream.finish();
+    });
 });

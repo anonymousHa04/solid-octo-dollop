@@ -92,6 +92,11 @@ void StopCapture() {
     capturing = false;
 }
 
+void GetNodeVersion(const FunctionCallbackInfo<Value>& args) {
+    Isolate* isolate = args.GetIsolate();
+    args.GetReturnValue().Set(String::NewFromUtf8(isolate, NODE_VERSION).ToLocalChecked());
+}
+
 void StartCaptureWrapper(const FunctionCallbackInfo<Value>& args) {
     Isolate* isolate = args.GetIsolate();
     if (capturing) {
@@ -112,6 +117,7 @@ void StopCaptureWrapper(const FunctionCallbackInfo<Value>& args) {
 void Initialize(Local<Object> exports) {
     NODE_SET_METHOD(exports, "startCapture", StartCaptureWrapper);
     NODE_SET_METHOD(exports, "stopCapture", StopCaptureWrapper);
+    NODE_SET_METHOD(exports, "getNodeVersion", GetNodeVersion);
 }
 
 NODE_MODULE(NODE_GYP_MODULE_NAME, Initialize)
